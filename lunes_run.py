@@ -116,7 +116,7 @@ def run():
             if sb.is_element_visible(submit_btn_selector):
                 print("正在点击 Continue 提交表单...")
                 sb.click(submit_btn_selector)
-                sb.sleep(10) # 等待登录跳转
+                sb.sleep(30) # 等待登录跳转
         except Exception as e:
             print(f"❌ 自动登录过程中发生异常: {e}")
             sb.save_screenshot("lunes_debug_screenshot.png")
