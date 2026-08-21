@@ -1,9 +1,6 @@
 import os
 import time
-import json
-import urllib.parse
 import requests
-# 引入 SeleniumBase 高级过盾包
 from seleniumbase import SB
 
 SERVER_URL = os.getenv("LUNES_SERVER_URL")
@@ -20,13 +17,8 @@ def send_tg_notification(message, photo_path=None):
 
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": "HTML"
-        }
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
         requests.post(url, json=payload)
-        print("TG 状态通知发送成功。")
     except Exception as e:
         print(f"发送 TG 消息异常: {e}")
 
@@ -34,121 +26,90 @@ def send_tg_notification(message, photo_path=None):
         try:
             url = f"https://api.telegram.org/bot{token}/sendPhoto"
             with open(photo_path, "rb") as f:
-                files = {"photo": f}
-                data = {"chat_id": chat_id, "caption": "Lunes Host 实时画面"}
-                requests.post(url, data=data, files=files)
-            print("TG 截图发送成功。")
+                requests.post(url, data={"chat_id": chat_id, "caption": "Lunes Host 实时画面"}, files={"photo": f})
         except Exception as e:
             print(f"发送 TG 截图异常: {e}")
 
 def run():
     if not SERVER_URL or not LUNES_EMAIL or not LUNES_PASSWORD:
-        print("错误: 缺少 LUNES_SERVER_URL、LUNES_EMAIL 或 LUNES_PASSWORD 环境变量")
+        print("错误: 缺少环境变量配置")
         return
 
-    # 启动 SeleniumBase 并配置代理指向 WARP 的 40000 端口
+    # ⚠️ 注意：如果你使用的是带 WARP 的 actions 配置，请把下面这行改为：
+    # with SB(uc=True, xvfb=True) as sb:
     with SB(uc=True, xvfb=True, proxy="socks5://127.0.0.1:40000") as sb:
         
-        # ⚡ 3 次 DNS 抗抖重试机制
         success = False
         for i in range(3):
             try:
-                print(f"正在访问 Lunes Host 登录界面 (第 {i+1}/3 次尝试)...")
-                sb.uc_open_with_reconnect("https://betadash.lunes.host/login", reconnect_time=8)
-                sb.sleep(5)
+                # 💡 优化 1：直接访问你的目标控制台地址，而不是写死的外层系统
+                print(f"正在访问目标面板地址 (第 {i+1}/3 次尝试)...")
+                sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=8)
+                sb.sleep(8)
                 
-                # 检查页面是否由于网络解析异常加载失败
-                current_url = sb.get_current_url()
                 page_source_lower = sb.get_page_source().lower()
-                if "dns_probe_finished_nxdomain" in page_source_lower or "can’t be reached" in page_source_lower or "something went wrong" in page_source_lower:
-                    print("⚠️ 检测到 DNS 解析失败 (NXDOMAIN) 或连接异常，原地等待 5 秒后执行自动重试...")
+                if "nxdomain" in page_source_lower or "can’t be reached" in page_source_lower:
+                    print("⚠️ DNS 阻断，等待重试...")
                     sb.sleep(5)
                     continue
-                
+                    
                 success = True
                 break
             except Exception as e:
-                print(f"访问页面发生异常: {e}，原地等待 5 秒后执行自动重试...")
+                print(f"访问页面发生异常: {e}")
                 sb.sleep(5)
 
         if not success:
-            print("❌ 错误: 经过 3 次重试仍无法加载页面，已触发网络阻断。")
             sb.save_screenshot("lunes_debug_screenshot.png")
-            send_tg_notification("❌ <b>Lunes Host 访问失败</b>\n经过 3 次重试仍无法加载 Lunes 登录页（可能遭遇临时线路阻断）。", "lunes_debug_screenshot.png")
+            send_tg_notification("❌ <b>Lunes 访问失败</b>\n网络阻断或节点离线。", "lunes_debug_screenshot.png")
             return
 
-        # 2. 核心过盾：自动寻找并执行系统物理级点击，过掉最外层的 Cloudflare 验证盾
-        sb.save_screenshot("lunes_debug_screenshot.png")
+        # 尝试物理点击过盾
         try:
-            print("正在检测并调用系统级 PyAutoGUI 驱动，物理点击最外层 Cloudflare 验证盾...")
             sb.uc_gui_click_captcha()
-            sb.sleep(10) # 给予 10 秒跳转缓冲
-            sb.save_screenshot("lunes_debug_screenshot.png")
-        except Exception as e:
-            print(f"验证盾点击结束或已被跳过: {e}")
+            sb.sleep(8)
+        except:
+            pass
 
-        # 3. 填充表单
-        try:
-            print("正在定位账号密码输入框并填充...")
-            # 阻塞式等待邮箱输入框渲染
-            sb.wait_for_element_visible("input[type='email']", timeout=15)
-            sb.update_text("input[type='email']", LUNES_EMAIL)
-            
-            # 填充密码
-            sb.update_text("input[type='password']", LUNES_PASSWORD)
-            sb.sleep(1)
-
-            # 4. 点击“记住我”
-            if sb.is_element_visible("input[type='checkbox']"):
-                sb.click("input[type='checkbox']")
-                print("已成功勾选记住我。")
-
-            # 5. 核心过盾 2：自动检测并物理点击登录表单下方内嵌的验证盾
-            try:
-                print("正在检测并物理点击登录表单下方内嵌的验证盾...")
-                sb.uc_gui_click_captcha()
-                sb.sleep(5)
-            except Exception as e:
-                print(f"表单内嵌验证盾处理完成: {e}")
-
-            # 6. 点击 Continue 按钮提交登录
-            submit_btn_selector = "button:contains('Continue'), button:contains('Zaloguj'), button[type='submit']"
-            if sb.is_element_visible(submit_btn_selector):
-                print("正在点击 Continue 提交表单...")
-                sb.click(submit_btn_selector)
-                sb.sleep(30) # 等待登录跳转
-        except Exception as e:
-            print(f"❌ 自动登录过程中发生异常: {e}")
-            sb.save_screenshot("lunes_debug_screenshot.png")
-            send_tg_notification(f"❌ <b>Lunes Host 运行异常</b>\n执行自动填表登录时失败: {e}", "lunes_debug_screenshot.png")
-            return
-
-        # 7. 验证登录状态并跳转至保活目标页
+        # 💡 优化 2：精准识别翼龙面板 (Pterodactyl) 的未登录状态
         current_url = sb.get_current_url()
-        if "login" in current_url or sb.is_element_visible("input[type='email']"):
-            print("❌ 自动登录失败：仍停留在登录页面。")
-            sb.save_screenshot("lunes_debug_screenshot.png")
-            send_tg_notification("❌ <b>Lunes Host 自动登录失败</b>\n未能成功进入后台系统。", "lunes_debug_screenshot.png")
-            return
-
-        print(f"✓ 登录成功！正在跳转至目标保活控制面板: {SERVER_URL}")
-        sb.open(SERVER_URL)
+        # 翼龙的账号输入框通常是 name="user" 或者 type="text"
+        user_selector = "input[name='user'], input[name='username'], input[type='email'], input[type='text']"
         
-        # 停留 15 秒，确保 Lunes 服务器接收到完整的打卡活跃心跳
+        if "login" in current_url or sb.is_element_visible(user_selector):
+            print("检测到处于未登录状态，开始填充翼龙面板表单...")
+            try:
+                sb.wait_for_element_visible(user_selector, timeout=15)
+                sb.update_text(user_selector, LUNES_EMAIL)
+                
+                sb.update_text("input[type='password']", LUNES_PASSWORD)
+                sb.sleep(1)
+
+                # 💡 优化 3：模拟按下回车键提交表单，规避按钮点击不到的问题
+                print("正在敲击回车键提交登录...")
+                sb.type("input[type='password']", "\n")
+                
+                # 给服务器充足的跳转时间
+                sb.sleep(20) 
+            except Exception as e:
+                print(f"❌ 填表异常: {e}")
+                sb.save_screenshot("lunes_debug_screenshot.png")
+                send_tg_notification(f"❌ <b>Lunes 填表异常</b>\n{e}", "lunes_debug_screenshot.png")
+                return
+
+        # 最终验证并保活打卡
+        print("正在进行最终状态验证...")
+        sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
         sb.sleep(15)
-
-        # 保存打卡完成截图
         sb.save_screenshot("lunes_debug_screenshot.png")
-        print("已截取登录打卡画面。")
 
-        if "login" in sb.get_current_url() or sb.is_element_visible("input[type='email']"):
-            msg = "❌ <b>Lunes Host 登录失效！</b>\n跳转至面板页面时，发现状态退回到了未登录状态。"
-            print(msg)
-            send_tg_notification(msg, "lunes_debug_screenshot.png")
+        if "login" in sb.get_current_url() or sb.is_element_visible(user_selector):
+            msg = "❌ <b>Lunes 登录失效！</b>\n仍然退回到了未登录状态，请检查账号密码是否正确。"
         else:
-            msg = "✅ <b>Lunes Host 每日自动登录打卡成功！</b>\n已通过账号密码 + 物理双重过盾机制刷新控制面板活跃状态。"
-            print(msg)
-            send_tg_notification(msg, "lunes_debug_screenshot.png")
+            msg = "✅ <b>Lunes 每日保活打卡成功！</b>\n成功进入控制面板内部。"
+            
+        print(msg)
+        send_tg_notification(msg, "lunes_debug_screenshot.png")
 
 if __name__ == "__main__":
     run()
