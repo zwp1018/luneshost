@@ -18,9 +18,17 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      # ====== 关键修改 1：增加系统底层依赖 ======
+      - name: Install System Dependencies
         run: |
-          pip install seleniumbase requests
+          sudo apt-get update
+          sudo apt-get install -y xvfb python3-tk python3-dev scrot dbus-x11
+
+      # ====== 关键修改 2：补全 Python 依赖 ======
+      - name: Install Python Packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install seleniumbase requests PyVirtualDisplay pyautogui
 
       - name: Set up WARP
         uses: fscarmen/warp-on-actions@v1.4
@@ -36,7 +44,6 @@ jobs:
           sleep 3
 
           echo "=== 2. 切换为局部 SOCKS5 代理模式 (Proxy Mode) ==="
-          # 兼容新旧不同版本的 cli 语法
           sudo warp-cli --accept-tos mode proxy || sudo warp-cli --accept-tos set-mode proxy || true
 
           echo "=== 3. 设定本地代理端口为 40000 ==="
@@ -47,11 +54,9 @@ jobs:
           sleep 5
 
           echo "=== 5. 【网络诊断】测试系统主网卡（不走代理，用于验证断网已恢复） ==="
-          # 如果这里返回了普通的 IP 且没有报错，说明虚拟机网络恢复正常
           curl --connect-timeout 5 https://ifconfig.me || echo "❌ 虚拟机全局网络依然断开！"
 
           echo "=== 6. 【代理诊断】测试 SOCKS5 代理网络是否通畅 ==="
-          # 检查 127.0.0.1:40000 代理是否成功代理出站
           curl -I --connect-timeout 5 --socks5-hostname 127.0.0.1:40000 https://cloudflare.com/cdn-cgi/trace || echo "❌ WARP SOCKS5 代理无法使用！"
 
       - name: Run check script
@@ -63,10 +68,14 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python lunes_run.py
 
+      # ====== 关键修改 3：捕获所有可能生成的截图 ======
       - name: Upload Debug Screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lunes-debug-screenshot
-          path: lunes_debug_screenshot.png
+          name: lunes-debug-screenshots
+          # 收集 output/screenshots 目录下可能产生的所有截图
+          path: |
+            lunes_debug.png
+            output/screenshots/*.png
           if-no-files-found: ignore
