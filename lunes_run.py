@@ -47,7 +47,7 @@ def run():
         return
 
     # 启动 SeleniumBase 并配置代理指向 WARP 的 40000 端口
-    with SB(uc=True, xvfb=True) as sb:
+    with SB(uc=True, xvfb=True, proxy="socks5://127.0.0.1:40000") as sb:
         
         # ⚡ 3 次 DNS 抗抖重试机制
         success = False
